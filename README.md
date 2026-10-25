@@ -101,60 +101,91 @@ The Scalable Urban Mobility Analytics Platform is designed to process large-scal
 
 ## Architecture
 
-```text
-          NYC TLC Trip Data
-                  |
-                  v
-       Ingestion & Orchestration
-          (Python / Airflow)
-                  |
-                  v
-       Immutable Raw Data Layer
-             (MinIO / S3)
-                  |
-                  v
-      Data Validation & Cleaning
-             (Apache Spark)
-             /           \
-            v             v
-    Curated Data       Quarantine
-       (Parquet)      Invalid Records
-            |
-            v
-    Distributed Analytics
-       (Apache Spark)
-            |
-            v
-     Analytics Data Layer
-   (Partitioned Parquet / S3)
-            |
-            v
-      SQL / OLAP Serving
-          (Trino)
-            |
-            v
-      Visualization Layer
-    (Apache Superset / Grafana)
+The platform follows a **batch-first Lambda Architecture** to support scalable historical transportation analytics, with a planned speed layer for future real-time processing. It separates data ingestion, processing, storage, SQL serving, and visualization into independent components.
 
-Supporting Services:
-PostgreSQL + Hive Metastore | Docker Compose
+### Overall Architecture
+
+```text
+                 NYC TLC Yellow Taxi Data
+                            |
+                            v
+                 Ingestion & Orchestration
+                    (Python / Airflow)
+                            |
+                            v
+                 Immutable Raw Data Layer
+                      (MinIO / S3)
+                            |
+                            v
+                  +---------------------+
+                  |                     |
+                  v                     v
+            Batch Layer           Speed Layer
+          (Apache Spark)       (Kafka + Streaming
+                               Processor - Planned)
+                  |                     |
+                  v                     v
+          Curated Data Layer      Streaming Results
+          (Parquet / S3)           (Planned)
+                  |                     |
+                  v                     |
+          Batch Analytics               |
+          (Apache Spark)                |
+                  |                     |
+                  v                     v
+                  +----------+----------+
+                             |
+                             v
+                      Serving Layer
+                 (Parquet + Hive Metastore
+                       + PostgreSQL)
+                             |
+                             v
+                         Trino
+                      (SQL / OLAP)
+                             |
+                             v
+                       Dashboard
+                  (Superset / Grafana)
+
+        Infrastructure: Docker Compose
 ```
 
-## Main Components
+*The speed layer and its integration with the serving layer are planned extensions. The initial implementation prioritizes batch processing of historical TLC files.*
 
-- **Ingestion and orchestration:** Python scripts and, in the planned full architecture, Apache Airflow manage monthly data ingestion, retries, and ingestion tracking.
-- **Object storage:** MinIO provides S3-compatible storage for immutable raw data, curated datasets, and analytical outputs.
-- **Data processing:** Apache Spark performs distributed cleaning, validation, feature engineering, and analytical aggregation.
-- **Data catalog:** Hive Metastore with PostgreSQL stores table metadata so SQL engines can discover datasets in object storage.
-- **SQL serving:** Trino provides interactive SQL access to analytical datasets without requiring dashboard clients to run Spark jobs directly.
-- **Visualization:** Apache Superset or Grafana presents mobility trends, demand hotspots, origin-destination flows, and other analytical results.
-- **Infrastructure:** Docker Compose manages services and supports reproducible deployment and worker configuration.
+### Architecture Components
 
-## Scalability and Reliability Evaluation
+- **Ingestion and orchestration:** Python scripts and Apache Airflow manage source-file ingestion, scheduling, task dependencies, retries, and workflow monitoring.
+- **Raw data layer:** MinIO provides S3-compatible object storage for preserving original TLC datasets.
+- **Batch layer:** Apache Spark validates records, applies data-quality rules, derives features, and generates analytical datasets. Invalid records are stored separately in a quarantine area.
+- **Speed layer (planned):** Kafka and a streaming processor will support continuous processing if a suitable real-time trip-event source becomes available.
+- **Serving layer:** Curated and aggregated Parquet datasets remain in object storage. Hive Metastore stores table metadata, backed by PostgreSQL for persistence.
+- **SQL / OLAP layer:** Trino provides interactive SQL access to analytical datasets for dashboards and other clients.
+- **Visualization layer:** Apache Superset or Grafana presents demand trends, revenue metrics, taxi-zone activity, and origin-destination patterns.
+- **Infrastructure:** Docker Compose coordinates the services and supports reproducible deployments and controlled scaling experiments.
 
-The platform is intended to evaluate:
+### Data Flow
 
-- **Worker scalability:** Compare 1, 2, and 4 Spark workers.
-- **Data scalability:** Benchmark workloads at approximately 5 GB, 20 GB, and 50 GB.
-- **Partitioning strategies:** Compare monthly, daily, and date-plus-zone partitioning using query latency, data scanned, file counts, and execution plans.
-- **Fault tolerance:** Terminate a worker or executor during processing and measure recovery, recomputation, and output consistency.
+1. **Ingestion:** Discover or download new TLC files and preserve them in the raw layer.
+2. **Validation and curation:** Spark validates schemas and records, derives useful features, and separates invalid data into quarantine.
+3. **Batch analytics:** Spark generates analytical datasets for hourly demand, daily revenue, zone demand, origin-destination patterns, and payment analysis.
+4. **Publication:** Validate processing outputs and expose completed datasets through the catalog.
+5. **SQL serving:** Trino queries the published Parquet datasets.
+6. **Visualization:** The dashboard retrieves query results from Trino and refreshes its displayed metrics.
+7. **Future streaming:** A speed layer may process incoming events independently and publish low-latency results for integration into the serving layer.
+
+### Scalability and Reliability
+
+The platform is designed to evaluate:
+
+- **Cluster scalability:** Compare configurations with 1, 2, and 4 Spark workers.
+- **Data scalability:** Benchmark workloads of approximately 5 GB, 20 GB, and 50 GB.
+- **Partitioning strategies:** Compare partition layouts using processing time, query latency, data scanned, and file counts.
+- **Fault tolerance:** Simulate worker or executor failures and evaluate recovery, retries, and output consistency.
+- **Pipeline reliability:** Track task status, validate output counts, and prevent incomplete processing results from being published.
+
+### Architectural Rationale
+
+The batch-first Lambda approach fits the initial dataset because NYC TLC trip records are published as periodic files rather than continuous live events. It allows the project to prioritize reliable historical analytics and measurable performance experiments while leaving a clear path toward real-time processing.
+
+A full Lambda implementation requires both batch and speed processing paths. Until the speed layer is implemented, the system should be described as a **batch-first Lambda design with a planned streaming extension**, not a fully deployed real-time Lambda platform.
