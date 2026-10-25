@@ -1,0 +1,64 @@
+services:
+  minio:
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: taxiadmin
+      MINIO_ROOT_PASSWORD: "12345678"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - taxi-net
+    healthcheck:
+      test: ["CMD", "silo", "healthcheck", "ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  spark-master:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-r-ubuntu
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8080"
+    ports:
+      - "7077:7077"
+      - "8081:8080"
+    volumes:
+      - ./jobs:/opt/spark-apps:ro
+      - ./spark/spark-defaults.conf:/opt/spark/conf/spark-defaults.conf:ro
+    networks:
+      - taxi-net
+
+  spark-worker:
+    image: apache/spark:3.5.9-scala2.12-java17-python3-r-ubuntu
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - spark://spark-master:7077
+    environment:
+      SPARK_WORKER_CORES: "1"
+      SPARK_WORKER_MEMORY: 1g
+      SPARK_WORKER_WEBUI_PORT: "8081"
+    depends_on:
+      spark-master:
+        condition: service_started
+    ports:
+      - "8082:8081"
+    volumes:
+      - ./jobs:/opt/spark-apps:ro
+    networks:
+      - taxi-net
+
+networks:
+  taxi-net:
+    driver: bridge
+
+volumes:
+  minio-data:
